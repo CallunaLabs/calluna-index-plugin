@@ -3,7 +3,7 @@
  * Plugin Name:       Calluna Index
  * Plugin URI:        https://github.com/callunaLabs/calluna-index-plugin
  * Description:       Feedback-Button für eingeloggte WP-User. Sendet Änderungswünsche/Ideen/Fehler (inkl. Screenshot + Seiten-Kontext) zentral an die Calluna-Index-Konsole (monitor.calluna.ai) — keine lokale Speicherung.
- * Version:           1.0.0
+ * Version:           1.0.1
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            Calluna Labs
@@ -17,9 +17,10 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CALLUNA_INDEX_VERSION', '1.0.0');
+define('CALLUNA_INDEX_VERSION', '1.0.1');
 define('CALLUNA_INDEX_KINDS', ['wunsch' => '💬 Änderung / Wunsch', 'idee' => '💡 Idee', 'fehler' => '🐞 Fehler']);
 define('CALLUNA_INDEX_TOKEN_OPTION', 'calluna_index_token');
+define('CALLUNA_INDEX_REGISTER_TOKEN_OPTION', 'calluna_index_register_token');
 
 require_once __DIR__ . '/lib/plugin-update-checker/plugin-update-checker.php';
 $calluna_index_update_checker = \YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
@@ -38,8 +39,15 @@ function calluna_index_monitor_url(): string {
     return untrailingslashit(apply_filters('calluna_index_monitor_url', $url));
 }
 function calluna_index_register_token(): string {
-    // Derselbe geteilte Token wie der Companion-Heartbeat.
-    return defined('CALLUNA_MONITOR_REGISTER_TOKEN') ? (string) CALLUNA_MONITOR_REGISTER_TOKEN : '';
+    // Bevorzugte Reihenfolge:
+    //   1. Constant CALLUNA_MONITOR_REGISTER_TOKEN in wp-config.php (falls gesetzt,
+    //      kann von der Companion-Heartbeat-Config mitgenutzt werden).
+    //   2. In der Plugin-Settings-Seite gepasteter Wert (wp_option).
+    if (defined('CALLUNA_MONITOR_REGISTER_TOKEN')) {
+        $c = (string) CALLUNA_MONITOR_REGISTER_TOKEN;
+        if ('' !== $c) return $c;
+    }
+    return (string) get_option(CALLUNA_INDEX_REGISTER_TOKEN_OPTION, '');
 }
 
 /* ==========================================================================
@@ -48,7 +56,7 @@ function calluna_index_register_token(): string {
 function calluna_index_bootstrap() {
     $shared = calluna_index_register_token();
     if ('' === $shared) {
-        return new WP_Error('no_register_token', 'CALLUNA_MONITOR_REGISTER_TOKEN ist nicht in wp-config.php definiert.');
+        return new WP_Error('no_register_token', 'Kein Register-Token — trag ihn unten ein oder setze CALLUNA_MONITOR_REGISTER_TOKEN in wp-config.php.');
     }
     $res = wp_remote_post(calluna_index_monitor_url() . '/api/index/register', [
         'timeout' => 15,
@@ -145,6 +153,13 @@ add_action('admin_menu', function () {
 add_action('admin_post_calluna_index_reconnect', function () {
     if (!current_user_can('manage_options')) wp_die('Forbidden');
     check_admin_referer('calluna_index_reconnect');
+    // Optionaler Register-Token aus dem Formular übernehmen (nur wenn ausgefüllt).
+    if (isset($_POST['register_token'])) {
+        $t = trim((string) wp_unslash($_POST['register_token']));
+        if ('' !== $t) {
+            update_option(CALLUNA_INDEX_REGISTER_TOKEN_OPTION, $t, false);
+        }
+    }
     delete_option(CALLUNA_INDEX_TOKEN_OPTION);
     $r = calluna_index_bootstrap();
     $msg = is_wp_error($r) ? 'err:' . $r->get_error_message() : 'ok';
@@ -161,13 +176,27 @@ function calluna_index_settings_page() {
         $ok = ('ok' === $m);
         echo '<div class="notice ' . ($ok ? 'notice-success' : 'notice-error') . '"><p>' . ($ok ? 'Verbunden.' : esc_html($m)) . '</p></div>';
     }
-    echo '<table class="form-table"><tr><th>Status</th><td>'
+    $constDefined = defined('CALLUNA_MONITOR_REGISTER_TOKEN') && '' !== (string) CALLUNA_MONITOR_REGISTER_TOKEN;
+    $tokenSource =
+        $constDefined ? 'aus wp-config.php <code>CALLUNA_MONITOR_REGISTER_TOKEN</code>' :
+        ($hasShared   ? 'in dieser Einstellungsseite gespeichert' : '—');
+
+    echo '<table class="form-table">';
+    echo '<tr><th>Status</th><td>'
         . ($connected ? '<span style="color:#2e7d47">✓ verbunden (per-Site-Token vorhanden)</span>' : '<span style="color:#b23b3b">✗ nicht verbunden</span>')
-        . ($hasShared ? '' : '<br><em>CALLUNA_MONITOR_REGISTER_TOKEN fehlt in wp-config.php</em>')
-        . '</td></tr></table>';
+        . '</td></tr>';
+    echo '<tr><th>Register-Token</th><td>' . $tokenSource . '</td></tr>';
+    echo '</table>';
+
     echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
     wp_nonce_field('calluna_index_reconnect');
     echo '<input type="hidden" name="action" value="calluna_index_reconnect">';
+    if (!$constDefined) {
+        echo '<table class="form-table"><tr><th><label for="register_token">Register-Token</label></th><td>';
+        echo '<input name="register_token" id="register_token" type="password" autocomplete="off" class="regular-text" placeholder="' . ($hasShared ? '(bereits gespeichert — leer lassen um beizubehalten)' : 'monitor-provided token') . '" value="">';
+        echo '<p class="description">Bekommst du von Heiko / dem Monitor-Admin. Wird verschlüsselt in <code>wp_options</code> abgelegt. Alternative: <code>define(\'CALLUNA_MONITOR_REGISTER_TOKEN\', \'…\')</code> in <code>wp-config.php</code>.</p>';
+        echo '</td></tr></table>';
+    }
     submit_button($connected ? 'Neu verbinden' : 'Jetzt verbinden');
     echo '</form></div>';
 }

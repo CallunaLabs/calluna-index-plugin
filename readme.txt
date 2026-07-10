@@ -3,7 +3,7 @@ Contributors: callunalabs
 Tags: feedback, calluna, monitor
 Requires at least: 6.0
 Tested up to: 6.5
-Stable tag: 1.0.0
+Stable tag: 1.0.1
 License: GPLv2 or later
 
 Feedback-Button für eingeloggte WP-User. Sendet Änderungswünsche/Ideen/Fehler
@@ -21,10 +21,18 @@ Feedback-Button für eingeloggte WP-User. Sendet Änderungswünsche/Ideen/Fehler
   Index-Posteingang.
 
 == Voraussetzungen ==
-- CALLUNA_MONITOR_REGISTER_TOKEN in wp-config.php (identisch zum Companion).
+- Register-Token: entweder als Konstante `CALLUNA_MONITOR_REGISTER_TOKEN` in
+  wp-config.php ODER direkt in der Plugin-Einstellungsseite (Einstellungen →
+  Calluna Index) einfügen. Der Token wird von Heiko / dem Monitor-Admin
+  bereitgestellt.
 - Die Seite muss im Monitor als Site registriert/adoptiert sein.
 
 == Changelog ==
+
+= 1.0.1 =
+* Register-Token darf jetzt auch in der Plugin-Einstellungsseite eingegeben werden
+  — Alternative zur `CALLUNA_MONITOR_REGISTER_TOKEN`-Konstante in wp-config.php.
+  Token wird in wp_options gespeichert; Constant hat Vorrang wenn gesetzt.
 
 = 1.0.0 =
 * Erste Version: Feedback-Overlay + Bootstrap-Auth + Weiterleitung an monitor.calluna.ai.
