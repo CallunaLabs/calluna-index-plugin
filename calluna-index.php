@@ -3,7 +3,7 @@
  * Plugin Name:       Calluna Index
  * Plugin URI:        https://github.com/callunaLabs/calluna-index-plugin
  * Description:       Feedback-Button für eingeloggte WP-User. Sendet Änderungswünsche/Ideen/Fehler (inkl. Screenshot + Seiten-Kontext) zentral an die Calluna-Index-Konsole (monitor.calluna.ai) — keine lokale Speicherung.
- * Version:           1.0.1
+ * Version:           1.0.2
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            Calluna Labs
@@ -17,7 +17,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CALLUNA_INDEX_VERSION', '1.0.1');
+define('CALLUNA_INDEX_VERSION', '1.0.2');
 define('CALLUNA_INDEX_KINDS', ['wunsch' => '💬 Änderung / Wunsch', 'idee' => '💡 Idee', 'fehler' => '🐞 Fehler']);
 define('CALLUNA_INDEX_TOKEN_OPTION', 'calluna_index_token');
 define('CALLUNA_INDEX_REGISTER_TOKEN_OPTION', 'calluna_index_register_token');

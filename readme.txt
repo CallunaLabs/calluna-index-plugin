@@ -3,7 +3,7 @@ Contributors: callunalabs
 Tags: feedback, calluna, monitor
 Requires at least: 6.0
 Tested up to: 6.5
-Stable tag: 1.0.1
+Stable tag: 1.0.2
 License: GPLv2 or later
 
 Feedback-Button für eingeloggte WP-User. Sendet Änderungswünsche/Ideen/Fehler
@@ -28,6 +28,11 @@ Feedback-Button für eingeloggte WP-User. Sendet Änderungswünsche/Ideen/Fehler
 - Die Seite muss im Monitor als Site registriert/adoptiert sein.
 
 == Changelog ==
+
+= 1.0.2 =
+* Plugin-Icon: Calluna-Logo (Brand-Purple) in Plugin-Listen + Update-Panels von WP-Admin.
+  Icons in `assets/` (icon-128, icon-256, icon.svg) werden vom Plugin-Update-Checker
+  automatisch ausgelesen.
 
 = 1.0.1 =
 * Register-Token darf jetzt auch in der Plugin-Einstellungsseite eingegeben werden
