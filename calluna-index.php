@@ -3,7 +3,7 @@
  * Plugin Name:       Calluna Index
  * Plugin URI:        https://github.com/callunaLabs/calluna-index-plugin
  * Description:       Feedback-Button für eingeloggte WP-User. Sendet Änderungswünsche/Ideen/Fehler (inkl. Screenshot + Seiten-Kontext) zentral an die Calluna-Index-Konsole (monitor.calluna.ai) — keine lokale Speicherung.
- * Version:           1.0.2
+ * Version:           1.0.4
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            Calluna Labs
@@ -17,10 +17,9 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CALLUNA_INDEX_VERSION', '1.0.2');
+define('CALLUNA_INDEX_VERSION', '1.0.4');
 define('CALLUNA_INDEX_KINDS', ['wunsch' => '💬 Änderung / Wunsch', 'idee' => '💡 Idee', 'fehler' => '🐞 Fehler']);
 define('CALLUNA_INDEX_TOKEN_OPTION', 'calluna_index_token');
-define('CALLUNA_INDEX_REGISTER_TOKEN_OPTION', 'calluna_index_register_token');
 
 require_once __DIR__ . '/lib/plugin-update-checker/plugin-update-checker.php';
 $calluna_index_update_checker = \YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
@@ -32,81 +31,71 @@ $calluna_index_update_checker->getVcsApi()->enableReleaseAssets();
 $calluna_index_update_checker->setBranch('main');
 
 /* ==========================================================================
-   Konfiguration: Monitor-URL + geteilter Register-Token
+   Konfiguration: Monitor-URL + per-Site-Token
    ========================================================================== */
 function calluna_index_monitor_url(): string {
     $url = defined('CALLUNA_INDEX_MONITOR_URL') ? CALLUNA_INDEX_MONITOR_URL : 'https://monitor.calluna.ai';
     return untrailingslashit(apply_filters('calluna_index_monitor_url', $url));
 }
-function calluna_index_register_token(): string {
-    // Bevorzugte Reihenfolge:
-    //   1. Constant CALLUNA_MONITOR_REGISTER_TOKEN in wp-config.php (falls gesetzt,
-    //      kann von der Companion-Heartbeat-Config mitgenutzt werden).
-    //   2. In der Plugin-Settings-Seite gepasteter Wert (wp_option).
-    if (defined('CALLUNA_MONITOR_REGISTER_TOKEN')) {
-        $c = (string) CALLUNA_MONITOR_REGISTER_TOKEN;
-        if ('' !== $c) return $c;
-    }
-    return (string) get_option(CALLUNA_INDEX_REGISTER_TOKEN_OPTION, '');
-}
-
-/* ==========================================================================
-   Auth: Bootstrap (shared Token → per-Site-Token), serverseitig
-   ========================================================================== */
-function calluna_index_bootstrap() {
-    $shared = calluna_index_register_token();
-    if ('' === $shared) {
-        return new WP_Error('no_register_token', 'Kein Register-Token — trag ihn unten ein oder setze CALLUNA_MONITOR_REGISTER_TOKEN in wp-config.php.');
-    }
-    $res = wp_remote_post(calluna_index_monitor_url() . '/api/index/register', [
-        'timeout' => 15,
-        'headers' => ['Content-Type' => 'application/json', 'Authorization' => 'Bearer ' . $shared],
-        'body'    => wp_json_encode(['site_url' => home_url()]),
-    ]);
-    if (is_wp_error($res)) {
-        return $res;
-    }
-    $code = wp_remote_retrieve_response_code($res);
-    $data = json_decode(wp_remote_retrieve_body($res), true);
-    if ($code < 200 || $code >= 300 || empty($data['token'])) {
-        return new WP_Error('register_failed', 'Register fehlgeschlagen (' . $code . '): ' . ($data['error'] ?? 'unbekannt'));
-    }
-    update_option(CALLUNA_INDEX_TOKEN_OPTION, (string) $data['token'], false);
-    return (string) $data['token'];
-}
 
 /**
- * Feedback an den Monitor senden. Holt/erneuert den per-Site-Token selbstständig
- * (Bootstrap bei fehlendem Token; ein Retry bei 401/ungültigem Token).
+ * Per-Site-Token dieser Publikation — wird HIER auf der WP-Seite erzeugt (analog
+ * zum Companion-Token) und in den Monitor eingefügt. Quelle:
+ *   1. Konstante CALLUNA_INDEX_TOKEN in wp-config.php (optional), sonst
+ *   2. wp_option (auf dieser Seite generiert).
  */
+function calluna_index_token(): string {
+    if (defined('CALLUNA_INDEX_TOKEN')) {
+        $c = (string) CALLUNA_INDEX_TOKEN;
+        if ('' !== $c) return $c;
+    }
+    return (string) get_option(CALLUNA_INDEX_TOKEN_OPTION, '');
+}
+
+/** Stellt sicher, dass ein Token existiert (generiert einen, falls keiner da ist). */
+function calluna_index_ensure_token(): string {
+    $t = (string) get_option(CALLUNA_INDEX_TOKEN_OPTION, '');
+    if ('' === $t) {
+        $t = wp_generate_password(48, false, false);
+        update_option(CALLUNA_INDEX_TOKEN_OPTION, $t, false);
+    }
+    return $t;
+}
+
+/** Feedback an den Monitor senden (per-Site-Token direkt). */
 function calluna_index_send(array $payload) {
-    $token = (string) get_option(CALLUNA_INDEX_TOKEN_OPTION, '');
+    $token = calluna_index_token();
     if ('' === $token) {
-        $token = calluna_index_bootstrap();
-        if (is_wp_error($token)) return $token;
+        return new WP_Error('no_token', 'Kein Site-Token hinterlegt — im Monitor unter Einstellungen → Index-Tokens generieren und hier eintragen.');
     }
-    $post = function ($tok) use ($payload) {
-        return wp_remote_post(calluna_index_monitor_url() . '/api/index/feedback', [
-            'timeout' => 15,
-            'headers' => ['Content-Type' => 'application/json', 'Authorization' => 'Bearer ' . $tok],
-            'body'    => wp_json_encode($payload),
-        ]);
-    };
-    $res = $post($token);
+    $res = wp_remote_post(calluna_index_monitor_url() . '/api/index/feedback', [
+        'timeout' => 15,
+        'headers' => ['Content-Type' => 'application/json', 'Authorization' => 'Bearer ' . $token],
+        'body'    => wp_json_encode($payload),
+    ]);
     if (is_wp_error($res)) return $res;
-    if (401 === (int) wp_remote_retrieve_response_code($res)) {
-        // Token ungültig/rotiert → einmal neu bootstrappen und erneut senden.
-        $token = calluna_index_bootstrap();
-        if (is_wp_error($token)) return $token;
-        $res = $post($token);
-        if (is_wp_error($res)) return $res;
-    }
     $code = (int) wp_remote_retrieve_response_code($res);
+    if (401 === $code) {
+        return new WP_Error('invalid_token', 'Token ungültig oder widerrufen — im Monitor neu generieren und hier eintragen.');
+    }
     if ($code < 200 || $code >= 300) {
         $data = json_decode(wp_remote_retrieve_body($res), true);
         return new WP_Error('send_failed', 'Senden fehlgeschlagen (' . $code . '): ' . ($data['error'] ?? 'unbekannt'));
     }
     return true;
+}
+
+/** Täglicher Heartbeat → Monitor markiert die Seite als „verbunden" (nicht-blockierend). */
+function calluna_index_maybe_ping(): void {
+    $token = calluna_index_token();
+    if ('' === $token) return;
+    if (get_transient('calluna_index_pinged')) return;
+    set_transient('calluna_index_pinged', 1, DAY_IN_SECONDS);
+    wp_remote_post(calluna_index_monitor_url() . '/api/index/ping', [
+        'timeout'  => 8,
+        'blocking' => false,
+        'headers'  => ['Content-Type' => 'application/json', 'Authorization' => 'Bearer ' . $token],
+    ]);
 }
 
 /* ==========================================================================
@@ -145,60 +134,82 @@ add_action('wp_ajax_calluna_index_submit', function () {
 });
 
 /* ==========================================================================
-   Einstellungsseite (Status + manueller Reconnect)
+   Einstellungsseite: per-Site-Token eintragen + Status
    ========================================================================== */
 add_action('admin_menu', function () {
     add_options_page('Calluna Index', 'Calluna Index', 'manage_options', 'calluna-index', 'calluna_index_settings_page');
 });
-add_action('admin_post_calluna_index_reconnect', function () {
+// Token neu generieren (überschreibt den alten → muss im Monitor nachgetragen werden).
+add_action('admin_post_calluna_index_regenerate', function () {
     if (!current_user_can('manage_options')) wp_die('Forbidden');
-    check_admin_referer('calluna_index_reconnect');
-    // Optionaler Register-Token aus dem Formular übernehmen (nur wenn ausgefüllt).
-    if (isset($_POST['register_token'])) {
-        $t = trim((string) wp_unslash($_POST['register_token']));
-        if ('' !== $t) {
-            update_option(CALLUNA_INDEX_REGISTER_TOKEN_OPTION, $t, false);
-        }
+    check_admin_referer('calluna_index_regenerate');
+    update_option(CALLUNA_INDEX_TOKEN_OPTION, wp_generate_password(48, false, false), false);
+    delete_transient('calluna_index_pinged');
+    wp_safe_redirect(add_query_arg('cidx_msg', 'regenerated', admin_url('options-general.php?page=calluna-index')));
+    exit;
+});
+// Verbindung testen: mit dem aktuellen Token gegen den Monitor pingen.
+add_action('admin_post_calluna_index_test', function () {
+    if (!current_user_can('manage_options')) wp_die('Forbidden');
+    check_admin_referer('calluna_index_test');
+    $token = calluna_index_token();
+    $msg = 'notoken';
+    if ('' !== $token) {
+        $res = wp_remote_post(calluna_index_monitor_url() . '/api/index/ping', [
+            'timeout' => 12,
+            'headers' => ['Content-Type' => 'application/json', 'Authorization' => 'Bearer ' . $token],
+        ]);
+        if (is_wp_error($res)) $msg = 'err:' . $res->get_error_message();
+        elseif (401 === (int) wp_remote_retrieve_response_code($res)) $msg = 'err:Token im Monitor (noch) nicht hinterlegt — dort bei dieser Publikation einfügen & speichern.';
+        elseif (200 === (int) wp_remote_retrieve_response_code($res)) $msg = 'ok';
+        else $msg = 'err:Monitor antwortete mit HTTP ' . wp_remote_retrieve_response_code($res);
     }
-    delete_option(CALLUNA_INDEX_TOKEN_OPTION);
-    $r = calluna_index_bootstrap();
-    $msg = is_wp_error($r) ? 'err:' . $r->get_error_message() : 'ok';
     wp_safe_redirect(add_query_arg('cidx_msg', rawurlencode($msg), admin_url('options-general.php?page=calluna-index')));
     exit;
 });
 function calluna_index_settings_page() {
-    $connected = '' !== (string) get_option(CALLUNA_INDEX_TOKEN_OPTION, '');
-    $hasShared = '' !== calluna_index_register_token();
+    $viaConst = defined('CALLUNA_INDEX_TOKEN') && '' !== (string) CALLUNA_INDEX_TOKEN;
+    // Token existiert immer (wird bei Bedarf hier erzeugt) — analog Companion.
+    $token = $viaConst ? (string) CALLUNA_INDEX_TOKEN : calluna_index_ensure_token();
     echo '<div class="wrap"><h1>Calluna Index</h1>';
     echo '<p>Feedback-Button (nur eingeloggte User) → zentral in der Calluna-Index-Konsole: <code>' . esc_html(calluna_index_monitor_url()) . '</code></p>';
     if (isset($_GET['cidx_msg'])) {
         $m = sanitize_text_field(wp_unslash($_GET['cidx_msg']));
-        $ok = ('ok' === $m);
-        echo '<div class="notice ' . ($ok ? 'notice-success' : 'notice-error') . '"><p>' . ($ok ? 'Verbunden.' : esc_html($m)) . '</p></div>';
+        if ('ok' === $m)                { echo '<div class="notice notice-success"><p>Verbunden ✓ — der Monitor kennt diesen Token.</p></div>'; }
+        elseif ('regenerated' === $m)   { echo '<div class="notice notice-warning"><p>Neuer Token erzeugt. <strong>Jetzt im Monitor nachtragen</strong>, sonst bricht die Anbindung.</p></div>'; }
+        elseif ('notoken' === $m)       { echo '<div class="notice notice-error"><p>Kein Token vorhanden.</p></div>'; }
+        else                            { echo '<div class="notice notice-error"><p>' . esc_html(str_replace('err:', '', $m)) . '</p></div>'; }
     }
-    $constDefined = defined('CALLUNA_MONITOR_REGISTER_TOKEN') && '' !== (string) CALLUNA_MONITOR_REGISTER_TOKEN;
-    $tokenSource =
-        $constDefined ? 'aus wp-config.php <code>CALLUNA_MONITOR_REGISTER_TOKEN</code>' :
-        ($hasShared   ? 'in dieser Einstellungsseite gespeichert' : '—');
 
-    echo '<table class="form-table">';
-    echo '<tr><th>Status</th><td>'
-        . ($connected ? '<span style="color:#2e7d47">✓ verbunden (per-Site-Token vorhanden)</span>' : '<span style="color:#b23b3b">✗ nicht verbunden</span>')
-        . '</td></tr>';
-    echo '<tr><th>Register-Token</th><td>' . $tokenSource . '</td></tr>';
-    echo '</table>';
+    echo '<p>Dieser Token erlaubt es dieser Seite, Feedback an die Calluna-Index-Konsole zu senden. '
+       . '<strong>So benutzen:</strong> Token kopieren → im Monitor unter <em>Einstellungen → Index-Tokens</em> bei dieser Publikation einfügen → speichern.</p>';
 
-    echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
-    wp_nonce_field('calluna_index_reconnect');
-    echo '<input type="hidden" name="action" value="calluna_index_reconnect">';
-    if (!$constDefined) {
-        echo '<table class="form-table"><tr><th><label for="register_token">Register-Token</label></th><td>';
-        echo '<input name="register_token" id="register_token" type="password" autocomplete="off" class="regular-text" placeholder="' . ($hasShared ? '(bereits gespeichert — leer lassen um beizubehalten)' : 'monitor-provided token') . '" value="">';
-        echo '<p class="description">Bekommst du von Heiko / dem Monitor-Admin. Wird verschlüsselt in <code>wp_options</code> abgelegt. Alternative: <code>define(\'CALLUNA_MONITOR_REGISTER_TOKEN\', \'…\')</code> in <code>wp-config.php</code>.</p>';
-        echo '</td></tr></table>';
+    echo '<table class="form-table"><tr><th>Token</th><td>';
+    echo '<code id="cidx-token" style="user-select:all;padding:6px 10px;background:#f6f7f7;border:1px solid #dcdcde;border-radius:4px;display:inline-block;font-size:13px">' . esc_html($token) . '</code> ';
+    echo '<button type="button" class="button" onclick="navigator.clipboard.writeText(document.getElementById(\'cidx-token\').textContent);this.textContent=\'Kopiert ✓\'">Kopieren</button>';
+    if ($viaConst) {
+        echo '<p class="description">Fix aus <code>wp-config.php</code> (<code>CALLUNA_INDEX_TOKEN</code>).</p>';
+    } else {
+        echo '<p class="description">Behandle ihn wie ein Passwort. Wird lokal in <code>wp_options</code> gespeichert.</p>';
     }
-    submit_button($connected ? 'Neu verbinden' : 'Jetzt verbinden');
-    echo '</form></div>';
+    echo '</td></tr></table>';
+
+    // Verbindung testen
+    echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="display:inline">';
+    wp_nonce_field('calluna_index_test');
+    echo '<input type="hidden" name="action" value="calluna_index_test">';
+    submit_button('Verbindung testen', 'primary', 'submit', false);
+    echo '</form> ';
+
+    // Token regenerieren (nur wenn nicht per Konstante fixiert)
+    if (!$viaConst) {
+        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="display:inline" onsubmit="return confirm(\'Neuen Token erzeugen? Du musst ihn danach im Monitor nachtragen, sonst bricht die Anbindung.\')">';
+        wp_nonce_field('calluna_index_regenerate');
+        echo '<input type="hidden" name="action" value="calluna_index_regenerate">';
+        submit_button('Token neu generieren', 'secondary', 'submit', false);
+        echo '</form>';
+    }
+    echo '</div>';
 }
 
 /* ==========================================================================
@@ -206,6 +217,7 @@ function calluna_index_settings_page() {
    ========================================================================== */
 add_action('wp_footer', function () {
     if (!is_user_logged_in()) return;
+    calluna_index_maybe_ping();
     $cfg = [
         'ajax'  => admin_url('admin-ajax.php'),
         'nonce' => wp_create_nonce('calluna_index'),

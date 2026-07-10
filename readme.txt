@@ -3,7 +3,7 @@ Contributors: callunalabs
 Tags: feedback, calluna, monitor
 Requires at least: 6.0
 Tested up to: 6.5
-Stable tag: 1.0.2
+Stable tag: 1.0.4
 License: GPLv2 or later
 
 Feedback-Button für eingeloggte WP-User. Sendet Änderungswünsche/Ideen/Fehler
@@ -14,20 +14,27 @@ Feedback-Button für eingeloggte WP-User. Sendet Änderungswünsche/Ideen/Fehler
 
 - Floating "Feedback"-Button, nur sichtbar für eingeloggte User.
 - Kategorien: Wunsch / Idee / Fehler, Freitext, Screenshot (Drag&Drop / Cmd+V / Datei).
-- Auth Hybrid: einmaliger Bootstrap mit dem geteilten CALLUNA_MONITOR_REGISTER_TOKEN
-  (wie der Companion-Heartbeat) -> per-Site-Token; danach eindeutige, widerrufbare
-  Zuordnung. Tokens bleiben serverseitig, nie im Browser.
+- Auth wie beim Companion: Der Token wird HIER auf der Seite erzeugt (Einstellungen →
+  Calluna Index → kopieren) und im Monitor bei dieser Publikation eingefügt. Der
+  Monitor speichert nur den Hash; pro Seite widerruf-/rotierbar.
 - Anzeige/Verwaltung des Feedbacks im Monitor: pro Site (Feedback-Tab) + globaler
   Index-Posteingang.
 
 == Voraussetzungen ==
-- Register-Token: entweder als Konstante `CALLUNA_MONITOR_REGISTER_TOKEN` in
-  wp-config.php ODER direkt in der Plugin-Einstellungsseite (Einstellungen →
-  Calluna Index) einfügen. Der Token wird von Heiko / dem Monitor-Admin
-  bereitgestellt.
+- Token im Plugin erzeugen (passiert automatisch) → im Monitor unter
+  Einstellungen → Index-Tokens bei dieser Publikation einfügen & speichern.
+- Optional fix per `define('CALLUNA_INDEX_TOKEN', '…')` in wp-config.php.
 - Die Seite muss im Monitor als Site registriert/adoptiert sein.
 
 == Changelog ==
+
+= 1.0.4 =
+* Companion-Stil: Token wird auf der WP-Seite erzeugt und angezeigt (Kopieren +
+  Neu generieren + Verbindung testen), im Monitor eingefügt. Kein Bootstrap /
+  kein geteilter Register-Token mehr. Täglicher Ping fürs "connected"-Signal.
+
+= 1.0.3 =
+* Zwischenschritt: per-Site-Token direkt statt Bootstrap.
 
 = 1.0.2 =
 * Plugin-Icon: Calluna-Logo (Brand-Purple) in Plugin-Listen + Update-Panels von WP-Admin.
